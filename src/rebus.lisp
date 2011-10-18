@@ -3,10 +3,12 @@
 
 (defvar *index-hash* (make-hash-table :test 'equal))
 (defvar *pictures-table* (make-hash-table :test 'equal))
+(defvar *combo-index* (make-hash-table :test #'equal))
 
 (defun reset-tables ()
   (setq *index-hash* (make-hash-table :test 'equal))
   (setq *pictures-table* (make-hash-table :test 'equal))
+  (setq *combo-index* (make-hash-table :test 'equal))  
   nil)
 
 (defun print-table (table)
@@ -271,4 +273,19 @@
             ))
            )
           (t (getf (first match) :word)))))
-  
+
+
+(defun search-pairs (chars)
+  (let ((match (gethash chars *index-hash*)))
+    (if (null match)  nil
+        (macrolet ((full-word-from-inverse (word)
+                     `(getf (gethash (getf ,word :inverse-chars) *index-hash*) :full)))
+          (loop
+             for word being the elements of (getf match :partial)
+             if (full-word-from-inverse word) do
+               (return (list :first (getf word :word)
+                             :second (first (full-word-from-inverse word))))
+             finally (return nil)))
+        )
+    )
+  )
