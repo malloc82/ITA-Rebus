@@ -9,6 +9,15 @@
   (setq *pictures-table* (make-hash-table :test 'equal))
   nil)
 
+(defun print-table (table)
+  (let ((result nil))
+    (maphash #'(lambda (key value)
+                 (push (list :key key
+                             :val value)
+                       result))
+             table)
+    result))
+
 (defun quicksort (lst)
   (if (or (null lst) (null (cdr lst)))
       lst
@@ -28,6 +37,7 @@
                 (quicksort-fn (remove-if-not #'(lambda (x)
                                                  (> (funcall fn x) (funcall fn pivot)))
                                              lst) :fn fn)))))
+
 ;; (defun permutation (s k)
 ;;   (let ((perm-lst nil))
 ;;     (labels ((rec (s k entry)
@@ -162,45 +172,30 @@
 ;;                            (nreverse char-lst)
 ;;                            (coerce (nreverse char-lst) form))))))
 
-(defun createItem (word pos)
-  (let* ((s (string-inverse-pos word pos)))
-    (list :pos-str (mapcar #'(lambda (index) (schar word index)) pos)
-          :word word
-          :score (calc-score s)
-          ;; :score (if (= len 0) 0
-          ;;            (float (/ (calc-score s) (length s))))
-          :pos pos
-          :inverse-str s)))
-
-(defun get-components (word)
-  (let ((len (length word)))
-  (mapcar #'(lambda (pos)
-              (createItem word pos))
-          (binomial-exp len))))
-
 (defun add-partial-word (word pos)
-  (let* ((inverse-str (string-inverse-pos word pos))
-         (pos-str (string-to-chars word pos))
-         (first-entry (first (getf (gethash pos-str *index-hash*) :partial))))
+  (let* ((pos-chars (string-to-chars word pos))
+         (inverse-chars (string-inverse-pos word pos))
+         (first-entry (first (getf (gethash pos-chars *index-hash*) :partial))))
     (unless (and (equal (getf first-entry :word) word)
-                 (equal (getf first-entry :inverse-str) inverse-str))
+                 (equal (getf first-entry :inverse-chars) inverse-chars))
       (push (list :word word
-                     :score (calc-score s)
-                     :pos pos
-                     :inverse-str inverse-str)
-            (getf (gethash key *index-hash*) :partial)))))
+                  :score (calc-score inverse-chars)
+                  :inverse-chars inverse-chars
+                  :pos pos)
+            (getf (gethash pos-chars *index-hash*) :partial)))))
 
 (defun add-full-word (word pos-lst)
   (let ((index-key (string-to-chars word))
         (components-table (make-hash-table :test #'equal)))
-    (mapc #'(lambda (pos)
-              (setf (gethash (string-to-chars word pos) components-table)
-                    (string-inverse-pos word pos)))
-          pos-lst)
-    (push (list :word word
-                :score 0
-                :components components-table)
-          (getf (gethash index-key *index-hash*) :full))))
+    (unless (getf (gethash index-key *index-hash*) :full)
+      (mapc #'(lambda (pos)
+                (setf (gethash (string-to-chars word pos) components-table)
+                      (string-inverse-pos word pos)))
+            pos-lst)
+      (push (list :word word
+                  :score 0
+                  :components components-table)
+            (getf (gethash index-key *index-hash*) :full)))))
 
 (defun setup-index (filename)
   (with-open-file (stream filename)
@@ -210,10 +205,11 @@
           ((null line))
         (let ((picture-words (cl-ppcre:split "\\s+" line)))
           (mapcar #'(lambda (word)
-                      (let ((pos-lst (binomial-exp :start 1 :end (1- (length word)))))
+                      (let* ((word-len (length word))
+                             (pos-lst (binomial-exp word-len :start 1 :end (1- word-len))))
                         (push (first picture-words) (gethash word *pictures-table*))
-                        (mapcar #'(lambda (combination)
-                                    (add-partial-word combination))
+                        (mapcar #'(lambda (pos)
+                                    (add-partial-word word pos))
                                 pos-lst) ;; excluding combination with all chars
                         (add-full-word word pos-lst)))
                   (cdr picture-words))
@@ -223,107 +219,56 @@
                    (setf (getf (gethash key *index-hash*) :partial)
                          (quicksort-fn (getf value :partial) :fn #'(lambda (x) (getf x :score)))))
                *index-hash*)
-      nil)))
-
-
-
-(defun setup-tables-2 (filename)
-  (with-open-file (stream filename)
-    (let ((word-lst nil)) 
-      (do ((line (read-line stream nil)
-                 (read-line stream nil)))
-          ((null line))
-        (let ((picture-words (cl-ppcre:split "\\s+" line)))
-          (mapcar #'(lambda (word)
-                      (let ((components-pos (binomial-exp (length word))))
-                        (push (first picture-words) (gethash word *pictures-table*))
-                        (mapcar #'(lambda (combination)
-                                    (add-partial-word combination))
-                                (cdr components-pos)) ;; excluding combination with all chars
-                        (add-full-word word components-pos)))
-                  (cdr picture-words))
-          (mapcar #'(lambda (word) (push (cons word (first picture-words)) word-lst))
-                  (cdr picture-words))))
-      (maphash #'(lambda (key value)
-                   (setf (getf (gethash key *index-hash*) :partial)
-                         (quicksort-fn (getf value :partial) :fn #'(lambda (x) (getf x :score)))))
-               *index-hash*)
-      nil)))
+      (hash-table-count *index-hash*))))
 
 ;; try multiple values
-
-;; (defun test-search (word)
-;;   (let* ((total-score (calc-score (string-to-chars word)))
-;;          (len (length word))
-;;          (pos-lst (binomial-exp len :start (ash len -1) :end len)))
-;;     (remove-if #'(lambda (x) (equal x "NOT FOUND"))
-;;                (mapcar #'(lambda (comb)
-;;                            (let* ((key (mapcar #'(lambda (index) (schar word index)) comb)) 
-;;                                   (best-match (gethash key *index-hash*)))
-;;                              (if best-match
-;;                                  (cons (list :query word :comb key)
-;;                                        (list (first (gethash key *index-hash*))))
-;;                                  "NOT FOUND")))
-;;                        pos-lst))))
-
-
-
-;; (defun search-word2 (word)
-;;   (let* ((word (string-downcase word))
-;;          (len (length word))
-;;          (components (mapcar  #'(lambda (pos-lst)
-;;                                   (mapcar #'(lambda (pos)
-;;                                               (schar word pos))
-;;                                           pos-lst))
-;;                               (binomial-exp len)))
-;;          (result nil))
-;;     (dolist (item components)
-;;       (let ((match (gethash item *index-hash*)))
-;;         (when match
-;;           (push match result))))
-;;     result))
 
 (defun search-index (word)
   (let* ((word (string-downcase word))
          (word-len (length word))
          ;; (total-score (calc-score (string-to-chars word)))
          (search-table (make-hash-table :test #'equal))
-         (match (gethash (string-to-chars word) *index-hash*))
+         (match (getf (gethash (string-to-chars word) *index-hash*) :full))
          (result nil))
     
-    (when (null match)
-        (mapcar #'(lambda (pos-lst)
-                    (let ((search-key (string-to-chars word pos-lst))
-                          (inverse-str (string-inverse-pos word pos-lst)))
-                      (when (gethash search-key *index-hash*)
-                        (let ((full-match    (getf (gethash search-key *index-hash*) :full))
-                              (partial-match (getf (gethash search-key *index-hash*) :partial)))
-                          (setf (gethash search-key search-table)
-                                (list :query (list :query-inverse-pos inverse-str
-                                                   :query-score (calc-score inverse-str))
-                                      :match (if (null full-match)
-                                                 partial-match
-                                                 full-match)))))))
-                (binomial-exp word-len :start 1 :end (1- word-len)))
+    (cond ((null match)
+           (mapcar #'(lambda (pos-lst)
+                      (let ((search-chars (string-to-chars word pos-lst)))
+                        (when (gethash search-chars *index-hash*)
+                          (let ((inverse-chars (string-inverse-pos word pos-lst))
+                                (full-match    (getf (gethash search-chars *index-hash*) :full)))
+                            (setf (gethash search-chars search-table)
+                                  (list :query (list :query-inverse-pos inverse-chars
+                                                     :query-score (calc-score inverse-chars))
+                                        :match (if (null full-match)
+                                                   (getf (gethash search-chars *index-hash*) :partial)
+                                                   full-match)))))))
+                  (binomial-exp word-len :start 1 :end word-len))
         
-        (labels ((pop-top-matches ()
-                   (let ((best-matches nil))
-                     (maphash #'(lambda (key value)
-                                  (push (list :score (+ (getf (getf value :query) :query-score)
-                                                        (getf (getf value :match) :score))
-                                              :key key
-                                              :query (getf (getf value :query) :query-inverse-pos)
-                                              :match (pop (getf (gethash key search-table) :match)))
-                                        best-matches)
-                                  (if (null (getf (gethash key search-table) :match))
-                                            (remhash key search-table)))
-                              search-table))))
-          
-          (do ((search-list (pop-top-matches) (pop-top-matches)))
-              ((= (hash-table-count search-table) 0) result)
-            (quicksort-fn search-list :fn #'(lambda (x) (getf x :score)))
-            (return search-list)
-            )))))
+          (labels ((pop-top-matches ()
+                     (let ((best-matches nil))
+                       (maphash #'(lambda (key value)
+                                    (push (list :score (+ (getf (getf value :query) :query-score)
+                                                          (getf (first (getf value :match)) :score))
+                                                :key key
+                                                :query-inverse (getf (getf value :query) :query-inverse-pos)
+                                                :match (pop (getf (gethash key search-table) :match)))
+                                          best-matches)
+                                    (if (null (getf (gethash key search-table) :match))
+                                        (remhash key search-table)))
+                                search-table)
+                       best-matches)))
+
+            (let ((serach-list (quicksort-fn (pop-top-matches) :fn #'(lambda (x) (getf x :score)))))
+              )
+            (do ((search-list (pop-top-matches) (pop-top-matches)))
+                ((= (hash-table-count search-table) 0) result)
+              (return (list :first (quicksort-fn search-list :fn #'(lambda (x) (getf x :score)))
+                            :second (quicksort-fn (pop-top-matches) :fn #'(lambda (x) (getf x :score)))))
+            ;; (return (list :first (subseq (quicksort-fn search-list :fn #'(lambda (x) (getf x :score))) 0 5)
+            ;;               :second (subseq (quicksort-fn (pop-top-matches) :fn #'(lambda (x) (getf x :score))) 0 5)))
+            ;; (return search-list)
+            ))
+           )
+          (t (getf (first match) :word)))))
   
-
-
