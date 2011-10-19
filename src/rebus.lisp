@@ -102,6 +102,12 @@
                        (rec (1- s) k (1+ offset)))))))
     (rec s k 0)))
 
+
+(defvar *binomial-cache* (make-hash-table :test #'equal))
+
+(defmacro clear-cache ()
+  (setq *binomial-cache* (make-hash-table :test #'equal)))
+
 (defun binomial-exp (k &key (start 1) (end k))
   (let ((result nil))
     (labels ((rec (i)
@@ -109,8 +115,15 @@
                (setq result (append (combinations k i) result))
                (if (not (equal i end))
                    (rec (1+ i)))))
-      (rec start))
-    result))
+      (when (and (> k 0) (> start 0) (> end 0) (> end start)) ;; valid arguments
+        (let* ((key (list k start end))
+               (val (gethash key *binomial-cache*)))
+          (if (null val)
+              (progn
+                (rec start)
+                (setf (gethash key *binomial-cache*) result)
+                result)
+              val))))))
 
 ;; (defun substrs (str len)
 ;;   (let ((strlen (length str))
@@ -227,36 +240,46 @@
                                 pos-lst) ;; excluding combination with all chars
                         (add-full-word word)))
                   (cdr picture-words))))
-      ;; sort each entry
+      ;; sort each entry of *index-hash*
       (maphash #'(lambda (key value)
                    (setf (getf (gethash key *index-hash*) :partial)
                          (quicksort-fn (getf value :partial) :fn #'(lambda (x) (getf x :score)))))
                *index-hash*)
 
-      ;; setting pair-index
+      ;; setting up *pair-index*
       (maphash #'(lambda (key value)
                    (when (getf value :full)
+                     (if (getf value :partial) (print (coerce key 'string)))
                      (mapc #'(lambda (components)
                                (let* ((chars (getf components :inverse-chars))
                                       (chars-len (length chars)))
-                                 (if (getf (gethash chars *pair-index*) :partial)
-                                     (remf (gethash chars *pair-index*) :partial))
+                                 (if (getf (gethash chars *pair-index*) :partial-pair)
+                                     (remf (gethash chars *pair-index*) :partial-pair))
                                  (push (list :first (getf components :word)
                                              :second (coerce key 'string)
                                              ;; (getf (first (getf value :full)) :word)
                                              )
-                                       (getf (gethash chars *pair-index*) :pair))
+                                       (getf (gethash chars *pair-index*) :full-pair))
                                  (mapc #'(lambda (pos)
-                                           (let ((partial (list-pos chars pos))
-                                                 (inverse-chars (list-inverse-pos chars pos)))
-                                             (unless (getf (gethash partial *pair-index*) :pair)
-                                                 (push (list :pair chars
-                                                             :distance inverse-chars
-                                                             :score (calc-score inverse-chars))
-                                                       (getf (gethash partial *pair-index*) :partial)))))
-                                       (binomial-exp chars-len :end (1- chars-len)))))
+                                           (let ((partial-chars (list-pos chars pos))
+                                                 (distance-chars (list-inverse-pos chars pos)))
+                                             (unless (or (getf (gethash partial-chars *index-hash*) :full)
+                                                         (getf (gethash partial-chars *pair-index*) :full-pair))
+                                                 (push (list :pair-key chars
+                                                             :distance distance-chars
+                                                             :score (calc-score distance-chars))
+                                                       (getf (gethash partial-chars *pair-index*) :partial-pair)))))
+                                       (binomial-exp chars-len :start 1 :end (1- chars-len)))))
                            (getf value :partial))))
                *index-hash*)
+
+      ;; sort each entry of *pair-index*
+      (maphash #'(lambda (key value)
+                   (setf (getf (gethash key *pair-index*) :partial-pair)
+                         (quicksort-fn (getf value :partial-pair) :fn #'(lambda (x) (getf x :score)))))
+               *pair-index*)
+
+      
       (hash-table-count *index-hash*))))
 
 ;; try multiple values
