@@ -1,7 +1,7 @@
 ;; (ql:quickload :split-sequence)
 (ql:quickload :cl-ppcre)
-(ql:quickload :iterate)
-(use-package :iterate)
+(defpackage :ita-rebus (:use :cl :cl-ppcre))
+(in-package :ita-rebus)
 
 (defvar *index-hash* (make-hash-table :test 'equal))
 (defvar *pictures-table* (make-hash-table :test 'equal))
@@ -77,10 +77,8 @@
                     (let ((end (1- s)))
                       (loop for i from 0 to end
                          collect (let ((item (list (+ i offset))))
-                                   (if (/= i end)
-                                       (nconc item '(-)))
-                                   (if (/= i 0)
-                                       (push '- item))
+                                   (if (/= i end) (nconc item '(-)))
+                                   (if (/= i 0) (push '- item))
                                    item))))
                    (t (append
                        (mapcar #'(lambda (index)
@@ -158,33 +156,39 @@
         else do (pop pos-lst))))
 
 (defmacro list-inverse-pos (lst pos)
-  `(let ((pos ,pos))
-     (iterate (for elem in ,lst)
-              (for i from 0 to (1- (length ,lst)))
-              (if (null pos)
-                  (collect elem into result)
-                  (if (not (equal i (first pos)))
-                      (progn
-                        (when (equal (first pos) '-)
-                          (pop pos))
-                        (collect elem into result))
-                      (pop pos)))
-              (finally (return result)))))
+  `(let ((pos ,pos)
+         (result nil))
+     (loop
+        for elem in ,lst
+        for i from 0 to (1- (length ,lst))
+        do
+          (if (null pos)
+              (push elem into result)
+              (if (not (equal i (first pos)))
+                  (progn
+                    (when (equal (first pos) '-)
+                      (pop pos))
+                    (push elem into result))
+                  (pop pos)))
+        finally (return (nreverse result)))))
 
 (defmacro list-pos (lst pos)
-  `(let ((pos ,pos))
-     (iterate (for elem in ,lst)
-              (for i from 0 to (1- (length ,lst)))
-              (when pos
-                (if (equal i (first pos))
+  `(let ((pos ,pos)
+         (result nil))
+     (loop
+        for elem in ,lst
+        for i from 0 to (1- (length ,lst))
+        do
+          (when pos
+            (if (equal i (first pos))
+                (progn
+                  (pop pos)
+                  (push elem into result))
+                (if (equal '- (first pos))
                     (progn
                       (pop pos)
-                      (collect elem into result))
-                    (if (equal '- (first pos))
-                        (progn
-                          (pop pos)
-                          (collect #\- into result)))))
-              (finally (return result)))))
+                      (push #\- reuslt)))))
+        finally (return (nreverse result)))))
 
 (defun add-partial-word (word pos)
   (let* ((pos-chars (string-to-chars word pos))
@@ -201,8 +205,7 @@
 (defun add-full-word (word)
   (let ((index-key (string-to-chars word)))
     (unless (getf (gethash index-key *index-hash*) :full)
-      (push (list :word word
-                  :score 0)
+      (push (list :word word :score 0)
             (getf (gethash index-key *index-hash*) :full)))))
 
 (setq end-index-cache-fn (memoize #'end-index))
@@ -272,16 +275,15 @@
       (maphash #'(lambda (key value)
                    (symbol-macrolet ((other-pair-lut (getf (gethash key *pair-index*) :other-pair)))
                      (setf other-pair-lut (make-hash-table :test #'equal))
-                     (mapc #'(lambda (partial-key)
-                               (let ((pattern (getf partial-key :pair-distance)))
-                                 (loop for elem being the elements of (gethash pattern scratch-table)
-                                    do (symbol-macrolet ((other-pair-entry
-                                                          (gethash (getf elem :val) other-pair-lut)))
-                                         (let ((match-info (list :pair-key (getf elem :pair-key)
-                                                                 :distance pattern)))
-                                           (unless (equal match-info (first other-pair-entry))
-                                             (push match-info other-pair-entry)))))))
-                           (getf value :partial-pair))))
+                     (loop for partial-key in (getf value :partial-pair) do
+                          (let ((diff-pattern (getf partial-key :pair-distance)))
+                            (loop for elem being the elements of (gethash diff-pattern scratch-table)
+                               do (symbol-macrolet ((other-pair-entry
+                                                     (gethash (getf elem :val) other-pair-lut)))
+                                    (let ((match-info (list :pair-key (getf elem :pair-key)
+                                                            :distance diff-pattern)))
+                                      (unless (equal match-info (first other-pair-entry))
+                                        (push match-info other-pair-entry)))))))))
                *pair-index*)
 
       ;; sort each entry of *pair-index*
