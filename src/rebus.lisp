@@ -3,9 +3,67 @@
 (defpackage :ita-rebus (:use :cl :cl-ppcre))
 (in-package :ita-rebus)
 
-(defvar *index-hash* (make-hash-table :test 'equal))
 (defvar *pictures-table* (make-hash-table :test 'equal))
+
+(defvar *index-hash* (make-hash-table :test 'equal))
+
+(defun add-partials (word)
+  (let* ((word-len (length word))
+         (pos-lst (funcall binomial-exp-cache-fn
+                           word-len :start 1 :end (1- word-len))))
+    (mapc #'(lambda (pos)
+              (let* ((pos-chars (string-to-chars word pos))
+                     (subtraction (string-inverse-pos word pos))
+                     (first-entry (first (getf (gethash pos-chars *index-hash) :partial)))
+                     (partial-word (list :word word
+                                         :socre (calc-score subtraction)
+                                         :subtraction subtraction
+                                         :key-index pos)))
+                (symbol-macrolet ((index-entry (getf (gethash pos-chars *index-hash) :partial)))
+                  (unless (and (equal (getf (first index-entry) :word) word)
+                               (equal (getf (first index-entry) :subtraction) subtraction))
+                    (push partial-word index-entry)))))
+          pos-lst)))
+
+(defun add-full-word (word)
+  (let ((index-key (string-to-chars word)))
+    (unless (getf (gethash index-key *index-hash*) :full)
+      (setf (getf (gethash index-key *index-hash*) :full) word))))
+
+(defvar *pattern-table* (make-hash-table :test 'equal))
 (defvar *pair-index* (make-hash-table :test #'equal))
+
+(defun add-full-pairs (index-key)
+  (let ((full-word (getf (gethash index-key *index-hash*) :full))
+        (full-pair-list nil))
+    (mapc #'(lambda (partial-word)
+              (let ((pair-table-index (getf partial-word :subtraction))
+                    (full-pair (list :first (getf partial-word :word)
+                                     :second full-word)))
+                (symbol-macrolet ((full-pair-entry
+                                   (getf (gethash pair-table-index *pair-index*) :full-pair)))
+                  (unless (equal full-pair (first full-pair-entry))
+                    (push full-pair full-pair-entry)
+                    (push pair-table-index full-pair-list)))))
+          (getf (gethash index-key *index-hash*) :partial))
+    full-pair-list))
+
+(defun add-partial-pairs (full-pair)
+  (let ((len (length full-pair)))
+    (mapc #'(lambda (diff-pos)
+              (let ((diff-pattern  (list-pos full-pair diff-pos))
+                    (partial-match (list-inverse-pos full-pair diff-pos))
+                    (partial-pair  (list :full-pair full-pair
+                                         :diff-pattern diff-pattern
+                                         :socre (calc-score diff-pattern))))
+                (symbol-macrolet ((partial-pair-entry
+                                   (getf (gethash partial-match *pair-index*) :partial-pair)))
+                  (unless (and (equal (getf (first partial-pair-entry) :full-pair) full-pair)
+                               (equal (getf (first partial-pair-entry) :diff-pattern) diff-pattern))
+                    (push partial-pair partial-pair-entry)
+                    (push (list :full-pair full-pair :partial-match partial-match) ;; pattern table
+                          (gethash diff-pattern *pattern-table*))))))
+          (funcall binomial-exp-cache-fn len :start 1 :end (1- len) :slot t))))
 
 (defun reset-tables ()
   (setq *index-hash* (make-hash-table :test 'equal))
@@ -69,6 +127,7 @@
                                                  (> (funcall fn x) pivot))
                                              lst) :fn fn)))))
 
+
 (defun combinations (s k &key (slot nil))
   (labels ((rec- (s k offset)
              (cond ((= s k)
@@ -115,6 +174,7 @@
       (when (and (> k 0) (> start 0) (> end 0) (>= end start)) ;; valid arguments
         (rec start)))
     result))
+(setq binomial-exp-cache-fn (memoize #'binomial-exp))
 
 (defun end-index (length)
   (append
@@ -128,6 +188,7 @@
               (loop for k from 0 upto (- i 2) collect k)
               '(-)
               (loop for k from j upto (1- length) collect k))))))
+(setq end-index-cache-fn (memoize #'end-index))
 
 (defun calc-score (str)
   (let ((score 0))
@@ -138,153 +199,90 @@
                   (setq score (+ score 5)))))
     score))
 
-(defmacro string-to-chars (str &optional pos-lst)
+(defun string-to-chars (str &optional pos-lst)
   (if (null pos-lst)
-      `(mapcar #'(lambda (index) (schar ,str index))
-           (loop for i from 0 upto (1- (length ,str)) collect i))
-      `(mapcar #'(lambda (index)
-                   (if (numberp index) (schar ,str index) #\-))
-               ,pos-lst)))
+      (mapcar #'(lambda (index) (schar str index))
+              (loop for i from 0 upto (1- (length str)) collect i))
+      (mapcar #'(lambda (index)
+                  (if (numberp index) (schar str index) #\-))
+              pos-lst)))
 
-(defmacro string-inverse-pos (str pos-lst)
-  `(let ((pos-lst ,pos-lst))
-     (loop
-        for char across ,str
-        for i from 0 upto (1- (length ,str))
-        if (or (null pos-lst)
-               (/= i (car pos-lst))) collect char
-        else do (pop pos-lst))))
+(defun string-inverse-pos (str pos-lst)
+  (loop
+     for char across str
+     for i from 0 upto (1- (length str))
+     if (or (null pos-lst)
+            (/= i (car pos-lst))) collect char
+     else do (pop pos-lst)))
 
-(defmacro list-inverse-pos (lst pos)
-  `(let ((pos ,pos)
-         (result nil))
-     (loop
-        for elem in ,lst
-        for i from 0 to (1- (length ,lst))
-        do
-          (if (null pos)
-              (push elem into result)
-              (if (not (equal i (first pos)))
-                  (progn
-                    (when (equal (first pos) '-)
-                      (pop pos))
-                    (push elem into result))
-                  (pop pos)))
-        finally (return (nreverse result)))))
+(defun list-inverse-pos (lst pos)
+  (let ((result nil))
+    (loop
+       for elem in ,lst
+       for i from 0 to (1- (length lst)) do
+         (if (null pos)
+             (push elem into result)
+             (if (not (equal i (first pos)))
+                 (progn
+                   (when (equal (first pos) '-)
+                     (pop pos))
+                   (push elem into result))
+                 (pop pos)))
+       finally (return (nreverse result)))))
 
-(defmacro list-pos (lst pos)
-  `(let ((pos ,pos)
-         (result nil))
-     (loop
-        for elem in ,lst
-        for i from 0 to (1- (length ,lst))
-        do
-          (when pos
-            (if (equal i (first pos))
-                (progn
-                  (pop pos)
-                  (push elem into result))
-                (if (equal '- (first pos))
-                    (progn
-                      (pop pos)
-                      (push #\- reuslt)))))
-        finally (return (nreverse result)))))
+(defun list-pos (lst pos)
+  (let ((result nil))
+    (loop
+       for elem in ,lst
+       for i from 0 to (1- (length ,lst)) do
+         (when pos
+           (if (equal i (first pos))
+               (progn
+                 (pop pos) (push elem into result))
+               (if (equal '- (first pos))
+                   (progn
+                     (pop pos) (push #\- reuslt)))))
+       finally (return (nreverse result)))))
 
-(defun add-partial-word (word pos)
-  (let* ((pos-chars (string-to-chars word pos))
-         (subtraction (string-inverse-pos word pos))
-         (first-entry (first (getf (gethash pos-chars *index-hash*) :partial))))
-    (unless (and (equal (getf first-entry :word) word)
-                 (equal (getf first-entry :subtraction) subtraction))
-      (push (list :word word
-                  :subtraction-score (calc-score subtraction)
-                  :subtraction subtraction
-                  :key-index pos)
-            (getf (gethash pos-chars *index-hash*) :partial)))))
-
-(defun add-full-word (word)
-  (let ((index-key (string-to-chars word)))
-    (unless (getf (gethash index-key *index-hash*) :full)
-      (push (list :word word :score 0)
-            (getf (gethash index-key *index-hash*) :full)))))
-
-(setq end-index-cache-fn (memoize #'end-index))
-(setq binomial-exp-cache-fn (memoize #'binomial-exp))
-
-(defun setup-index (filename)
+(defun setup-index-hash (filename)
   (with-open-file (stream filename)
-    (let ((scratch-table (make-hash-table :test #'equal))) 
-      (do ((line (read-line stream nil)
-                 (read-line stream nil)))
-          ((null line))
-        (let ((picture-words (cl-ppcre:split "\\s+" line)))
-          (mapcar #'(lambda (word)
-                      (let* ((word-len (length word))
-                             (pos-lst (funcall binomial-exp-cache-fn
-                                               word-len :start 1 :end (1- word-len))))
-                        (push (first picture-words) (gethash word *pictures-table*))
-                        (mapcar #'(lambda (pos)
-                                    (add-partial-word word pos))
-                                pos-lst) ;; excluding combination with all chars
-                        (add-full-word word)))
-                  (cdr picture-words))))
-      ;; sort each entry of *index-hash*
-      (maphash #'(lambda (key value)
-                   (setf (getf (gethash key *index-hash*) :partial)
-                         (quicksort-fn (getf value :partial) :fn #'(lambda (x) (getf x :subtraction-score)))))
-               *index-hash*)
+    (do ((line (read-line stream nil)
+               (read-line stream nil)))
+        ((null line))
+      (let ((picture-words (cl-ppcre:split "\\s+" line)))
+        (mapcar #'(lambda (word)
+                    (push (first picture-words) (gethash word *pictures-table*))
+                    (add-full-word word)
+                    (add-partials word))
+                (cdr picture-words)))))
+  ;; sort each entry of *index-hash*
+  (maphash #'(lambda (key value)
+               (setf (getf (gethash key *index-hash*) :partial)
+                     (quicksort-fn (getf value :partial) :fn #'(lambda (x) (getf x :subtraction-score)))))
+           *index-hash*))
 
-      ;; setting up *pair-index*
-      (maphash #'(lambda (key value)
-                   (when (getf value :full)
-                     ;; (if (getf value :partial) (print (coerce key 'string)))
-                     (mapc #'(lambda (components)
-                               (let* ((chars (getf components :subtraction))
-                                      (chars-len (length chars)))
-                                 (symbol-macrolet ((exact-pair-words (list
-                                                                      :first (getf components :word)
-                                                                      :second (getf (first (getf value :full))
-                                                                              :word)))
-                                                   (pair-entry (getf (gethash chars *pair-index*)
-                                                                     :full-pair))
-                                                   (all-combo-of-subtraction-part
-                                                    (funcall binomial-exp-cache-fn chars-len :start 1 :end (1- chars-len) :slot t)))
-                                   (push exact-pair-words pair-entry)
-                                   ;; (if (equal chars '(#\d #\e))
-                                   ;;     (format t "~d~%" chars-len))
-                                   (mapc #'(lambda (pos)
-                                             (let ((distance-chars (list-pos chars pos))
-                                                   (partial-chars  (list-inverse-pos chars pos)))
-                                               ;; (if (equal chars '(#\d #\e))
-                                               ;;     (format t "~d~%" pos))
-                                                 (push (list :pair-key chars :val partial-chars)
-                                                       (gethash distance-chars scratch-table))                                                 
-                                                 (push (list :pair-key chars
-                                                             :pair-distance distance-chars
-                                                             ;; :pos pos
-                                                             ;; :partial-chars partial-chars
-                                                             :pair-score (calc-score distance-chars))
-                                                       (getf (gethash partial-chars *pair-index*) :partial-pair))))
-                                         all-combo-of-subtraction-part))))
-                           ;; (funcall end-index-cache-fn chars-len))))
-                           (getf value :partial))))
-               *index-hash*)
+(defun setup-pair-index ()
+  (when (> (hash-table-count *index-hash*) 0)
+    (loop for word being the hash-key of *pictures-table* do 
+         (mapc #'add-partial-pairs (add-full-pairs (string-to-chars word))))
+    (maphash #'(lambda (pair-key pair-matches)
+                 (symbol-macrolet ((other-pair-lut (getf (gethash pair-key *pair-index*) :other-pair)))
+                   (setf other-pair-lut (make-hash-table :test #'equal))
+                   (mapc #'(lambda (partial-pair)
+                             (let ((diff-pattern (getf partial-key :diff-pattern)))
+                               (loop for partial-match in (gethash diff-pattern *pattern-table*) do
+                                    (symbol-macrolet ((other-pair-entry
+                                                       (gethash (getf partial-match :partial-match)
+                                                                other-pair-lut)))
+                                      (let ((match-info (list :full-pair (getf partial-match :full-pair)
+                                                              :diff-pattern diff-pattern)))
+                                        (unless (equal (first other-pair-entry) match-info)
+                                          (push match-info other-pair-entry)))))))
+                         (getf pair-matches :partial-pair))))
+             *pair-index*)))
 
       (dump-table scratch-table "scratch-table.txt")
       ;; setup lookup table for each pair-entry 
-      (maphash #'(lambda (key value)
-                   (symbol-macrolet ((other-pair-lut (getf (gethash key *pair-index*) :other-pair)))
-                     (setf other-pair-lut (make-hash-table :test #'equal))
-                     (loop for partial-key in (getf value :partial-pair) do
-                          (let ((diff-pattern (getf partial-key :pair-distance)))
-                            (loop for elem being the elements of (gethash diff-pattern scratch-table)
-                               do (symbol-macrolet ((other-pair-entry
-                                                     (gethash (getf elem :val) other-pair-lut)))
-                                    (let ((match-info (list :pair-key (getf elem :pair-key)
-                                                            :distance diff-pattern)))
-                                      (unless (equal match-info (first other-pair-entry))
-                                        (push match-info other-pair-entry)))))))))
-               *pair-index*)
 
       ;; sort each entry of *pair-index*
       (maphash #'(lambda (key value)
