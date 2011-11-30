@@ -69,7 +69,7 @@
       (when (and (> k 0) (> start 0) (> end 0) (>= end start)) ;; valid arguments
         (rec start)))
     result))
-(setq binomial-exp-cache-fn (memoize #'binomial-exp))
+(defvar binomial-exp-cache-fn (memoize #'binomial-exp))
 
 (defun end-index (length)
   (append
@@ -83,7 +83,7 @@
               (loop for k from 0 upto (- i 2) collect k)
               '(-)
               (loop for k from j upto (1- length) collect k))))))
-(setq end-index-cache-fn (memoize #'end-index))
+(defvar end-index-cache-fn (memoize #'end-index))
 
 (defun calc-score (str)
   (let ((score 0))
@@ -152,7 +152,7 @@
               (let* ((pos-chars (string-to-chars word pos))
                      (subtraction (string-inverse-pos word pos))
                      (partial-word (list :word word
-                                         :socre (calc-score subtraction)
+                                         :score (calc-score subtraction)
                                          :subtraction subtraction
                                          :key-index pos)))
                 (symbol-macrolet ((index-entry (getf (gethash pos-chars *index-hash*) :partial)))
@@ -191,7 +191,7 @@
                      (partial-match (list-inverse-pos full-pair diff-pos))
                      (partial-pair  (list :full-pair full-pair
                                           :diff-pattern diff-pattern
-                                          :socre (calc-score diff-pattern))))
+                                          :score (calc-score diff-pattern))))
                 (symbol-macrolet ((partial-pair-entry
                                    (getf (gethash partial-match *pair-index*) :partial-pair)))
                   (unless (and (equal (getf (first partial-pair-entry) :full-pair) full-pair)
@@ -202,9 +202,10 @@
           (funcall binomial-exp-cache-fn len :start 1 :end (1- len) :slot t))))
 
 (defun reset-tables ()
-  (setq *index-hash* (make-hash-table :test 'equal))
+  (setq *index-hash*     (make-hash-table :test 'equal))
   (setq *pictures-table* (make-hash-table :test 'equal))
-  (setq *pair-index* (make-hash-table :test 'equal))
+  (setq *pair-index*     (make-hash-table :test 'equal))
+  (setq *pattern-table*  (make-hash-table :test 'equal))
   nil)
 
 (defun dump-table (table filename)
@@ -231,9 +232,11 @@
   (let ((setup-output nil))
     (reset-tables)
     (time (setq setup-output (setup-index-hash filename)))
+    (time (setup-pair-index))
     (format t "~d~%" setup-output)
-    (dump-table *pair-index* "pair.txt")
-    (dump-table *index-hash* "index.txt")))
+    (dump-table *pair-index*    "pair.txt")
+    (dump-table *index-hash*    "index.txt")
+    (dump-table *pattern-table* "pattern.txt")))
 
 (defun setup-index-hash (filename)
   (with-open-file (stream filename)
@@ -249,7 +252,7 @@
   ;; sort each entry of *index-hash*
   (maphash #'(lambda (key value)
                (setf (getf (gethash key *index-hash*) :partial)
-                     (quicksort-fn (getf value :partial) :fn #'(lambda (x) (getf x :subtraction-score)))))
+                     (quicksort-fn (getf value :partial) :fn #'(lambda (x) (getf x :score)))))
            *index-hash*))
 
 ;; smaller hash-table for each partial matches?
