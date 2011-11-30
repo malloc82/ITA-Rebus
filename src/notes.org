@@ -1,0 +1,13 @@
+
+* Possible comparison scheme:
+  |--------------+------------------+--------------------------|
+  |              | - chars          | - pictures               |
+  |              |                  | (pair chars)             |
+  |--------------+------------------+--------------------------|
+  | + chars      | Presorted O(1)   | ** Only possible if the  |
+  |              |                  | picture is exactly match |
+  |--------------+------------------+--------------------------|
+  | + pictures   | Same as above,   | Hash-table O(1)          |
+  | (pair chars) | but need to      |                          |
+  |              | record the order |                          |
+  |--------------+------------------+--------------------------|
