@@ -10,4 +10,5 @@
   ((:file "package")
    (:file "utils"  :depends-on ("package"))
    (:file "tables" :depends-on ("package"))
-   (:file "rebus"  :depends-on ("package" "tables" "utils"))))
+   (:file "rebus-index"  :depends-on ("package" "tables" "utils"))
+   (:file "rebus-search" :depends-on ("package" "tables" "utils"))))

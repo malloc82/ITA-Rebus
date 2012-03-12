@@ -21,15 +21,11 @@
                                              lst) :fn fn)))))
 
 (defun mk-combinations-fn ()
-  (let ((combination-cache      (make-hash-table :test #'equal))
-        (combination-slot-cache (make-hash-table :test #'equal)))
-    #'(lambda (s k &key (slot nil))
+  (let ((combination-cache (make-hash-table :test #'equal)))
+    #'(lambda (s k)
         (macrolet ((cached-rec (s k)
                      `(or (gethash (list ,s ,k) combination-cache)
-                          (rec ,s ,k)))
-                   (cached-rec- (s k)
-                     `(or (gethash (list ,s ,k) combination-slot-cache)
-                          (rec- ,s ,k))))
+                          (rec ,s ,k))))
           (labels ((rec (s k)
                      (let ((s-1 (1- s)))
                        (cond ((= s k)
@@ -43,42 +39,15 @@
                                        (mapcar #'(lambda (index)
                                                    (append (list s-1) index))
                                                (cached-rec s-1 (1- k)))
-                                       (cached-rec s-1 k)))))))
-                   (rec- (s k)
-                     (let ((s-1 (1- s)))
-                       (cond ((= s k)
-                              (setf (gethash (list s k) combination-slot-cache)
-                                    (list (loop for i from s-1 downto 0 collect i))))
-                             ((= k 1)
-                              (setf (gethash (list s k) combination-slot-cache)
-                                    (loop for i from s-1 downto 0 collect (if (= i 0)
-                                                                              (list i)
-                                                                              (list i '-)))))
-                             (t (setf (gethash (list s k) combination-slot-cache)
-                                      (append
-                                       (mapcar #'(lambda (index)
-                                                   (if (or (equal (1- s-1) (first index))
-                                                           (equal (first index) '-))
-                                                       (append (list s-1) index)
-                                                       (append (list s-1) '(-) index)))
-                                               (cached-rec- s-1 (1- k)))
-                                       ;; (cached-rec- s-1 k)
-                                       (mapcar #'(lambda (index-lst)
-                                                   (if (equal (first index-lst) '-)
-                                                       index-lst
-                                                       (append '(-) index-lst)))
-                                               (cached-rec- s-1 k)))))))))
-            (if (null slot)
-                (mapcar #'reverse (cached-rec  s k))
-                (mapcar #'reverse (cached-rec- s k))))))))
+                                       (cached-rec s-1 k))))))))
+            (mapcar #'reverse (cached-rec  s k)))))))
 
 (defvar combinations (mk-combinations-fn))
 
-
-(defun binomial-exp (k &key (start 1) (end k) (slot nil))
+(defun binomial-exp (k &key (start 1) (end k))
   (let ((result nil))
     (labels ((rec (i)
-               (setq result (append (funcall combinations k i :slot slot) result))
+               (setq result (append (funcall combinations k i) result))
                (if (not (equal i start))
                    (rec (1- i)))))
       (when (and (> k 0) (> start 0) (> end 0) (>= end start)) ;; valid arguments
@@ -145,12 +114,13 @@
   (let ((result nil))
     (loop
        for elem in lst
-       for i from 0 to (1- (length lst)) do
-         (when pos
-           (if (equal i (first pos))
-               (progn
-                 (pop pos) (push elem result))
-               (if (equal '- (first pos))
-                   (progn
-                     (pop pos) (push #\- result)))))
+       for i from 0  do
+         (if pos
+           (cond ((equal i (first pos))
+                  (pop pos) (push elem result))
+                 ((not (equal #\- (first result)))
+                  (push #\- result)))
+           (progn
+             (push #\- result)
+             (return (nreverse result))))
        finally (return (nreverse result)))))

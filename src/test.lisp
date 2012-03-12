@@ -21,7 +21,7 @@
              table))
 
 (defun reset-tables ()
-  (setq *index-hash*     (make-hash-table :test 'equal))
+  (setq *word-index*     (make-hash-table :test 'equal))
   (setq *pictures-table* (make-hash-table :test 'equal))
   (setq *pair-index*     (make-hash-table :test 'equal))
   (setq *pattern-table*  (make-hash-table :test 'equal))
@@ -34,12 +34,13 @@
   (let ((setup-output nil))
     (reset-tables)
 
-    (format t "Indexing *index-hash*~%")
-    (time (setq setup-output (setup-index-hash filename)))
+    (format t "Indexing *word-index*~%")
+    (time (setq setup-output (setup-word-index filename)))
 
     (format t "Setting up *pair-index*")
     (time (setup-pair-index))
-
+    (format t "Done~%")
+    
     ;; test
     (loop for key being the hash-key of *subtraction-pattern* do
          (if (= (getf (gethash key *subtraction-pattern*) :count) 1)
@@ -47,6 +48,6 @@
     
     (format t "~d~%" setup-output)
     (dump-table *pair-index*    "pair.txt")
-    (dump-table *index-hash*    "index.txt")
+    (dump-table *word-index*    "index.txt")
     (dump-table *pattern-table* "pattern.txt")
     (dump-table *subtraction-pattern* "sub-pattern.txt")))
